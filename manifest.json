@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.hmarquez-solutions.ora",
+  "name": "Ora",
+  "version": "0.1.0",
+  "author": "Hector Marquez",
+  "license": "MIT",
+  "description": "A quiet Catholic rule of prayer in the Omarchy bar.",
+  "kinds": ["bar-widget"],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Ora",
+    "description": "Daily Mass readings, Rosary mysteries, prayer reminders, and trusted Catholic reflections.",
+    "category": "Lifestyle",
+    "aliases": ["ora", "catholic", "prayer", "rosary", "mass"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "readingsReminder": "07:30",
+      "angelusReminder": "12:00",
+      "rosaryReminder": "20:00",
+      "remindersEnabled": true
+    },
+    "schema": [
+      {
+        "key": "remindersEnabled",
+        "type": "boolean",
+        "label": "Prayer reminders",
+        "defaultValue": true
+      },
+      {
+        "key": "readingsReminder",
+        "type": "string",
+        "label": "Mass readings reminder",
+        "description": "Local time in 24-hour HH:MM format; leave blank to disable.",
+        "defaultValue": "07:30"
+      },
+      {
+        "key": "angelusReminder",
+        "type": "string",
+        "label": "Angelus reminder",
+        "description": "Local time in 24-hour HH:MM format; leave blank to disable.",
+        "defaultValue": "12:00"
+      },
+      {
+        "key": "rosaryReminder",
+        "type": "string",
+        "label": "Rosary reminder",
+        "description": "Local time in 24-hour HH:MM format; leave blank to disable.",
+        "defaultValue": "20:00"
+      }
+    ]
+  }
+}

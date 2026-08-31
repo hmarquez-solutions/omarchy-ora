@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""Local data and actions for the Ora Omarchy plugin."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import urllib.parse
+
+
+PLUGIN_ID = "io.github.hmarquez-solutions.ora"
+STATE_DIR = pathlib.Path(os.environ.get("XDG_STATE_HOME", pathlib.Path.home() / ".local/state")) / "omarchy" / "ora"
+STATE_FILE = STATE_DIR / "state.json"
+
+
+def easter(year: int) -> dt.date:
+    """Gregorian Easter, using the Anonymous Gregorian algorithm."""
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = (h + l - 7 * m + 114) % 31 + 1
+    return dt.date(year, month, day)
+
+
+def first_sunday_of_advent(year: int) -> dt.date:
+    christmas = dt.date(year, 12, 25)
+    candidate = christmas - dt.timedelta(days=(christmas.weekday() + 1) % 7)
+    return candidate - dt.timedelta(weeks=3)
+
+
+def liturgical_day(day: dt.date) -> tuple[str, str]:
+    """Return a useful broad Roman-calendar season and its ordinary color.
+
+    This intentionally does not claim to replace an episcopal conference's
+    calendar: local solemnities and optional memorials belong to the linked
+    official readings page.
+    """
+    year_easter = easter(day.year)
+    ash_wednesday = year_easter - dt.timedelta(days=46)
+    palm_sunday = year_easter - dt.timedelta(days=7)
+    pentecost = year_easter + dt.timedelta(days=49)
+    advent = first_sunday_of_advent(day.year)
+    christmas = dt.date(day.year, 12, 25)
+    epiphany_end = dt.date(day.year, 1, 12)
+
+    fixed = {
+        (1, 1): ("Solemnity of Mary, Mother of God", "white"),
+        (3, 19): ("Solemnity of Saint Joseph", "white"),
+        (3, 25): ("Solemnity of the Annunciation", "white"),
+        (6, 29): ("Saints Peter and Paul", "red"),
+        (8, 15): ("Assumption of the Blessed Virgin Mary", "white"),
+        (11, 1): ("Solemnity of All Saints", "white"),
+        (12, 8): ("Immaculate Conception", "white"),
+        (12, 25): ("Nativity of the Lord", "white"),
+    }
+    if (day.month, day.day) in fixed:
+        return fixed[(day.month, day.day)]
+    if day == palm_sunday:
+        return "Palm Sunday of the Passion of the Lord", "red"
+    if day == year_easter:
+        return "Easter Sunday", "white"
+    if day == pentecost:
+        return "Pentecost Sunday", "red"
+    if ash_wednesday <= day < year_easter:
+        return "Lent", "violet"
+    if year_easter < day < pentecost:
+        return "Easter Season", "white"
+    if advent <= day < christmas:
+        return "Advent", "violet"
+    if day >= christmas or day <= epiphany_end:
+        return "Christmas Season", "white"
+    return "Ordinary Time", "green"
+
+
+def mysteries(day: dt.date) -> tuple[str, list[str]]:
+    sets = {
+        0: ("Joyful Mysteries", ["The Annunciation", "The Visitation", "The Nativity", "The Presentation", "The Finding in the Temple"]),
+        1: ("Sorrowful Mysteries", ["The Agony in the Garden", "The Scourging at the Pillar", "The Crowning with Thorns", "The Carrying of the Cross", "The Crucifixion"]),
+        2: ("Glorious Mysteries", ["The Resurrection", "The Ascension", "The Descent of the Holy Spirit", "The Assumption", "The Coronation of Mary"]),
+        3: ("Luminous Mysteries", ["The Baptism of Jesus", "The Wedding at Cana", "The Proclamation of the Kingdom", "The Transfiguration", "The Institution of the Eucharist"]),
+        4: ("Sorrowful Mysteries", ["The Agony in the Garden", "The Scourging at the Pillar", "The Crowning with Thorns", "The Carrying of the Cross", "The Crucifixion"]),
+        5: ("Joyful Mysteries", ["The Annunciation", "The Visitation", "The Nativity", "The Presentation", "The Finding in the Temple"]),
+        6: ("Glorious Mysteries", ["The Resurrection", "The Ascension", "The Descent of the Holy Spirit", "The Assumption", "The Coronation of Mary"]),
+    }
+    return sets[day.weekday()]
+
+
+def load_state() -> dict:
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_state(state: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = STATE_FILE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
+    temporary.replace(STATE_FILE)
+
+
+def today_payload(day: dt.date | None = None) -> dict:
+    day = day or dt.date.today()
+    season, color = liturgical_day(day)
+    mystery_name, mystery_items = mysteries(day)
+    state = load_state().get(day.isoformat(), {})
+    reading_path = day.strftime("%m%d%y") + ".cfm"
+    return {
+        "date": day.isoformat(),
+        "dateLabel": day.strftime("%A, %B %-d"),
+        "liturgicalDay": season,
+        "liturgicalColor": color,
+        "mysteryName": mystery_name,
+        "mysteries": mystery_items,
+        "completed": {
+            "readings": bool(state.get("readings")),
+            "rosary": bool(state.get("rosary")),
+        },
+        "links": {
+            "readings": "https://bible.usccb.org/bible/readings/" + reading_path,
+            "reflection": "https://www.wordonfire.org/reflections/",
+            "hallow": "https://hallow.com/",
+            "bibleInAYear": "https://ascensionpress.com/pages/bible-in-a-year",
+        },
+    }
+
+
+def set_completed(kind: str, value: bool) -> None:
+    state = load_state()
+    key = dt.date.today().isoformat()
+    record = state.setdefault(key, {})
+    record[kind] = value
+    # Bound a purely local convenience file so it never becomes a diary by accident.
+    for old_key in sorted(state)[:-45]:
+        del state[old_key]
+    save_state(state)
+
+
+def notify(title: str, body: str) -> None:
+    command = ["omarchy-notification-send", title, body]
+    try:
+        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        subprocess.Popen(["notify-send", title, body], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def open_url(url: str) -> None:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError("Ora only opens HTTPS links")
+    subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    today_parser = sub.add_parser("today")
+    today_parser.add_argument("--date", help="ISO date, useful for tests")
+    complete_parser = sub.add_parser("complete")
+    complete_parser.add_argument("kind", choices=("readings", "rosary"))
+    complete_parser.add_argument("value", nargs="?", default="true", choices=("true", "false"))
+    notify_parser = sub.add_parser("notify")
+    notify_parser.add_argument("kind", choices=("readings", "angelus", "rosary"))
+    open_parser = sub.add_parser("open")
+    open_parser.add_argument("provider", choices=("readings", "reflection", "hallow", "bibleInAYear"))
+    args = parser.parse_args()
+
+    if args.command == "today":
+        selected = dt.date.fromisoformat(args.date) if args.date else None
+        print(json.dumps(today_payload(selected), separators=(",", ":")))
+    elif args.command == "complete":
+        set_completed(args.kind, args.value == "true")
+    elif args.command == "notify":
+        messages = {
+            "readings": ("Ora · Mass readings", "Take a few quiet minutes with today's Word."),
+            "angelus": ("Ora · The Angelus", "The Angel of the Lord declared unto Mary."),
+            "rosary": ("Ora · Rosary", mysteries(dt.date.today())[0] + " today."),
+        }
+        notify(*messages[args.kind])
+    elif args.command == "open":
+        if args.provider == "readings":
+            set_completed("readings", True)
+        open_url(today_payload()["links"][args.provider])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
