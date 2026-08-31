@@ -51,13 +51,28 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    opticalSize: Style.space(21)
+    opticalSize: Style.space(20)
     iconComponent: Component {
-      OpticalGlyph {
+      Item {
         anchors.fill: parent
-        text: "✝"
-        fontSize: Style.font.display
-        color: root.sacred
+
+        Rectangle {
+          anchors.horizontalCenter: parent.horizontalCenter
+          anchors.top: parent.top
+          width: Style.space(4)
+          height: parent.height
+          radius: width / 2
+          color: button.foreground
+        }
+
+        Rectangle {
+          anchors.horizontalCenter: parent.horizontalCenter
+          y: Style.space(6)
+          width: Style.space(16)
+          height: Style.space(4)
+          radius: height / 2
+          color: button.foreground
+        }
       }
     }
     tooltipText: ora.day.liturgicalDay ? "Ora · " + ora.day.liturgicalDay : "Ora"
