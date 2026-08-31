@@ -51,8 +51,15 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "✝"
-    foreground: root.sacred
+    opticalSize: Style.space(21)
+    iconComponent: Component {
+      OpticalGlyph {
+        anchors.fill: parent
+        text: "✝"
+        fontSize: Style.font.display
+        color: root.sacred
+      }
+    }
     tooltipText: ora.day.liturgicalDay ? "Ora · " + ora.day.liturgicalDay : "Ora"
     onPressed: function (code) {
       if (code === Qt.RightButton) ora.open("readings")
