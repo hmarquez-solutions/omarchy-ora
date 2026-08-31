@@ -19,16 +19,13 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   property int cursorIndex: 0
   property bool cursorActive: false
-  readonly property var actions: ["readings", "rosary", "reflection", "hallow", "bibleInAYear"]
+  readonly property var actions: ["readings", "rosary", "usccb", "hallow", "bibleInAYear"]
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
   function activate(index) {
-    var action = actions[Math.max(0, Math.min(actions.length - 1, index))]
-    if (action === "readings") ora.open("readings")
-    else if (action === "rosary") ora.complete("rosary")
-    else ora.open(action)
+    ora.open(actions[Math.max(0, Math.min(actions.length - 1, index))])
   }
 
   onOpenedChanged: if (opened) {
@@ -47,7 +44,7 @@ Panel {
     function toggle(): void { root.toggle() }
     function refresh(): string { ora.refresh(); return "ok" }
     function readings(): string { ora.open("readings"); return "ok" }
-    function rosary(): string { ora.complete("rosary"); return "ok" }
+    function rosary(): string { ora.open("rosary"); return "ok" }
   }
 
   BarIconButton {
@@ -95,6 +92,7 @@ Panel {
         var key = String(text).toLowerCase()
         if (key === "r") ora.refresh()
         else if (key === "m") ora.open("readings")
+        else if (key === "p") ora.open("rosary")
       }
     }
 
@@ -125,28 +123,82 @@ Panel {
 
       Repeater {
         model: [
-          { title: "Mass readings", detail: "Official USCCB readings", action: "readings", done: ora.day.completed && ora.day.completed.readings },
-          { title: "Pray the Rosary", detail: ora.day.mysteryName || "Today's mysteries", action: "rosary", done: ora.day.completed && ora.day.completed.rosary }
+          { title: "Mass readings", detail: "Word on Fire · readings and reflection", action: "readings", done: ora.day.completed && ora.day.completed.readings, mysteries: [] },
+          { title: "Pray the Rosary", detail: ora.day.mysteryName || "Today's mysteries", action: "rosary", done: ora.day.completed && ora.day.completed.rosary, mysteries: ora.day.mysteries || [] }
         ]
         delegate: Rectangle {
           required property var modelData
           required property int index
           Layout.fillWidth: true
-          implicitHeight: Style.space(58)
+          implicitHeight: Math.max(Style.space(58), ruleRow.implicitHeight + Style.space(20))
           radius: Style.space(8)
           color: root.cursorActive && root.cursorIndex === index ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12) : "transparent"
           border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.16)
+
           RowLayout {
-            anchors.fill: parent
-            anchors.margins: Style.space(10)
-            Text { text: modelData.done ? "✓" : "○"; color: modelData.done ? root.sacred : root.dim; font.pixelSize: Style.font.heading }
-            ColumnLayout {
-              Layout.fillWidth: true; spacing: 1
-              Text { text: modelData.title; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.subtitle; font.weight: Font.Medium }
-              Text { text: modelData.detail; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            id: ruleRow
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: Style.space(10)
+            anchors.rightMargin: Style.space(10)
+            spacing: Style.space(10)
+
+            Text {
+              text: modelData.done ? "✓" : "○"
+              color: modelData.done ? root.sacred : root.dim
+              font.pixelSize: Style.font.heading
+              horizontalAlignment: Text.AlignHCenter
+              Layout.preferredWidth: Style.space(22)
+              Layout.alignment: Qt.AlignTop
             }
-            Text { text: "›"; color: root.dim; font.pixelSize: Style.font.heading }
+
+            Column {
+              Layout.fillWidth: true
+              Layout.preferredWidth: 1
+              spacing: 1
+              Text {
+                width: parent.width
+                text: modelData.title
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.subtitle
+                font.weight: Font.Medium
+              }
+              Text {
+                width: parent.width
+                text: modelData.detail
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+              Item {
+                width: 1
+                height: Style.space(6)
+                visible: (modelData.mysteries || []).length > 0
+              }
+              Repeater {
+                model: modelData.mysteries || []
+                delegate: Text {
+                  required property var modelData
+                  required property int index
+                  width: parent.width
+                  text: (index + 1) + "  " + modelData
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+            }
+
+            Text {
+              text: "↗"
+              color: root.dim
+              font.pixelSize: Style.font.subtitle
+              Layout.alignment: Qt.AlignTop
+            }
           }
+
           MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.activate(index) }
         }
       }
@@ -155,7 +207,7 @@ Panel {
 
       Repeater {
         model: [
-          { title: "Bishop Barron", detail: "Daily Gospel Reflection" },
+          { title: "USCCB", detail: "Official conference readings" },
           { title: "Open Hallow", detail: "Continue your guided prayer" },
           { title: "Fr. Mike Schmitz", detail: "Bible in a Year" }
         ]
@@ -168,10 +220,28 @@ Panel {
           radius: Style.space(8)
           color: root.cursorActive && root.cursorIndex === actionIndex ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12) : "transparent"
           RowLayout {
-            anchors.fill: parent; anchors.leftMargin: Style.space(12); anchors.rightMargin: Style.space(12)
-            ColumnLayout { Layout.fillWidth: true; spacing: 0
-              Text { text: modelData.title; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.subtitle }
-              Text { text: modelData.detail; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            anchors.fill: parent
+            anchors.leftMargin: Style.space(12)
+            anchors.rightMargin: Style.space(12)
+            spacing: Style.space(10)
+            Column {
+              Layout.fillWidth: true
+              Layout.preferredWidth: 1
+              spacing: 0
+              Text {
+                width: parent.width
+                text: modelData.title
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.subtitle
+              }
+              Text {
+                width: parent.width
+                text: modelData.detail
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
             }
             Text { text: "↗"; color: root.dim; font.pixelSize: Style.font.subtitle }
           }

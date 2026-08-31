@@ -8,14 +8,14 @@ Ora puts the day, the Rosary, and trusted Catholic resources one click away. It 
 
 - Liturgical season and color in the bar
 - Today's Rosary mysteries
-- Official daily Mass readings from the USCCB
-- Daily Gospel Reflections from Word on Fire
+- Daily Mass readings and Gospel reflection from Word on Fire
+- Official USCCB readings as a secondary link
 - Launch links for Hallow and Fr. Mike Schmitz's Bible in a Year
 - Configurable daily reminders for the readings, Angelus, and Rosary
 - Local completion marks retained for 45 days
 - Mouse and keyboard navigation
 
-Ora's built-in calendar intentionally covers broad Roman-calendar seasons and major fixed solemnities. The linked USCCB page remains authoritative for the complete local calendar and daily readings.
+Ora's built-in calendar intentionally covers broad Roman-calendar seasons and major fixed solemnities. Word on Fire is the primary readings page because it lays out the day's Word with Bishop Barron's reflection; the USCCB link remains the official conference text.
 
 ## Install
 
@@ -40,6 +40,7 @@ Then add **Ora** to the bar from Omarchy's bar settings. The plugin defaults to 
 - Arrow keys or `j`/`k`: move through actions
 - Enter: activate
 - `m`: open Mass readings
+- `p`: open today's Rosary (USCCB how-to, with the day's mysteries listed in the panel)
 - `r`: refresh
 - Escape: close
 

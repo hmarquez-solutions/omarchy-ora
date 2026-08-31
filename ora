@@ -129,10 +129,11 @@ def today_payload(day: dt.date | None = None) -> dict:
             "rosary": bool(state.get("rosary")),
         },
         "links": {
-            "readings": "https://bible.usccb.org/bible/readings/" + reading_path,
-            "reflection": "https://www.wordonfire.org/reflections/",
+            "readings": "https://www.wordonfire.org/reflections/",
+            "usccb": "https://bible.usccb.org/bible/readings/" + reading_path,
+            "rosary": "https://www.usccb.org/how-to-pray-the-rosary",
             "hallow": "https://hallow.com/",
-            "bibleInAYear": "https://ascensionpress.com/pages/bible-in-a-year",
+            "bibleInAYear": "https://app.ascensionpress.com/podcasts/bible",
         },
     }
 
@@ -174,7 +175,7 @@ def main() -> int:
     notify_parser = sub.add_parser("notify")
     notify_parser.add_argument("kind", choices=("readings", "angelus", "rosary"))
     open_parser = sub.add_parser("open")
-    open_parser.add_argument("provider", choices=("readings", "reflection", "hallow", "bibleInAYear"))
+    open_parser.add_argument("provider", choices=("readings", "rosary", "usccb", "hallow", "bibleInAYear"))
     args = parser.parse_args()
 
     if args.command == "today":
@@ -190,8 +191,8 @@ def main() -> int:
         }
         notify(*messages[args.kind])
     elif args.command == "open":
-        if args.provider == "readings":
-            set_completed("readings", True)
+        if args.provider in ("readings", "rosary"):
+            set_completed(args.provider, True)
         open_url(today_payload()["links"][args.provider])
     return 0
 

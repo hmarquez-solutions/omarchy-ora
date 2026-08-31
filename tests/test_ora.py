@@ -34,7 +34,23 @@ class OraTests(unittest.TestCase):
 
     def test_readings_url(self):
         payload = ora.today_payload(dt.date(2026, 8, 30))
-        self.assertEqual(payload["links"]["readings"], "https://bible.usccb.org/bible/readings/083026.cfm")
+        self.assertEqual(payload["links"]["readings"], "https://www.wordonfire.org/reflections/")
+        self.assertEqual(payload["links"]["usccb"], "https://bible.usccb.org/bible/readings/083026.cfm")
+
+    def test_provider_urls(self):
+        payload = ora.today_payload(dt.date(2026, 8, 30))
+        self.assertEqual(payload["links"]["rosary"], "https://www.usccb.org/how-to-pray-the-rosary")
+        self.assertEqual(payload["links"]["bibleInAYear"], "https://app.ascensionpress.com/podcasts/bible")
+        self.assertEqual(
+            payload["mysteries"],
+            [
+                "The Resurrection",
+                "The Ascension",
+                "The Descent of the Holy Spirit",
+                "The Assumption",
+                "The Coronation of Mary",
+            ],
+        )
 
 
 if __name__ == "__main__":
