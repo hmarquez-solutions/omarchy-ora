@@ -21,6 +21,9 @@ Panel {
   property bool cursorActive: false
   readonly property var actions: ["readings", "rosary", "reflection", "hallow", "bibleInAYear"]
 
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
+
   function activate(index) {
     var action = actions[Math.max(0, Math.min(actions.length - 1, index))]
     if (action === "readings") ora.open("readings")
@@ -51,26 +54,11 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    opticalSize: Style.space(20)
     iconComponent: Component {
       Item {
-        anchors.fill: parent
-
-        Rectangle {
-          anchors.horizontalCenter: parent.horizontalCenter
-          anchors.top: parent.top
-          width: Style.space(4)
-          height: parent.height
-          radius: width / 2
-          color: button.foreground
-        }
-
-        Rectangle {
-          anchors.horizontalCenter: parent.horizontalCenter
-          y: Style.space(6)
-          width: Style.space(16)
-          height: Style.space(4)
-          radius: height / 2
+        OraIcon {
+          anchors.centerIn: parent
+          iconSize: Style.bar.iconCanvas
           color: button.foreground
         }
       }
