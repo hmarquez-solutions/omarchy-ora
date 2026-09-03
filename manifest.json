@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.hmarquez-solutions.ora",
   "name": "Ora",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Hector Marquez",
   "license": "MIT",
   "description": "A quiet Catholic rule of prayer in the Omarchy bar.",
@@ -13,18 +13,26 @@
   },
   "barWidget": {
     "displayName": "Ora",
-    "description": "Daily Mass readings, Rosary mysteries, prayer reminders, and trusted Catholic reflections.",
+    "description": "Today's celebration and readings, Rosary mysteries, a prayer for the hour, reminders, and trusted Catholic resources.",
     "category": "Lifestyle",
-    "aliases": ["ora", "catholic", "prayer", "rosary", "mass"],
+    "aliases": ["ora", "catholic", "prayer", "rosary", "mass", "saint"],
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
       "readingsReminder": "07:30",
       "angelusReminder": "12:00",
       "rosaryReminder": "20:00",
-      "remindersEnabled": true
+      "remindersEnabled": true,
+      "tintCross": false
     },
     "schema": [
+      {
+        "key": "tintCross",
+        "type": "boolean",
+        "label": "Color the bar cross by liturgical season",
+        "description": "Green in Ordinary Time, violet in Advent and Lent, gold on feasts, red for martyrs.",
+        "defaultValue": false
+      },
       {
         "key": "remindersEnabled",
         "type": "boolean",
@@ -42,7 +50,7 @@
         "key": "angelusReminder",
         "type": "string",
         "label": "Angelus reminder",
-        "description": "Local time in 24-hour HH:MM format; leave blank to disable.",
+        "description": "Local time in 24-hour HH:MM format; leave blank to disable. Becomes the Regina Caeli during Easter.",
         "defaultValue": "12:00"
       },
       {

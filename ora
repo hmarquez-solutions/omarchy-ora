@@ -1,22 +1,58 @@
 #!/usr/bin/env python3
-"""Local data and actions for the Ora Omarchy plugin."""
+"""Local data and actions for the Ora Omarchy plugin.
+
+`ora today` is cache-only and fast; it is what the panel reads. `ora today
+--sync` refreshes the network caches first (bounded timeouts) and is what the
+panel runs on its slow timer, so the UI never waits on the network.
+"""
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import html
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
+import urllib.error
 import urllib.parse
+import urllib.request
 
 
 PLUGIN_ID = "io.github.hmarquez-solutions.ora"
+USER_AGENT = "Ora/0.2 (Omarchy bar plugin; +https://github.com/hmarquez-solutions/omarchy-ora)"
 STATE_DIR = pathlib.Path(os.environ.get("XDG_STATE_HOME", pathlib.Path.home() / ".local/state")) / "omarchy" / "ora"
+CACHE_DIR = pathlib.Path(os.environ.get("XDG_CACHE_HOME", pathlib.Path.home() / ".cache")) / "omarchy" / "ora"
 STATE_FILE = STATE_DIR / "state.json"
+FEEDS_FILE = CACHE_DIR / "feeds.json"
+FEED_MAX_AGE = dt.timedelta(hours=6)
+NETWORK_TIMEOUT = 10
 
+LITCAL_URL = "https://litcal.johnromanodorazio.com/api/dev/calendar/nation/US/{year}?year_type=CIVIL"
+USCCB_RSS = "https://bible.usccb.org/readings.rss"
+WORD_ON_FIRE_RSS = "https://www.wordonfire.org/reflections/feed/"
+
+COMPLETABLE = ("readings", "rosary", "prayer")
+CROSS_GLYPH = "\U000f0953"
+
+# LitCal's grade scale (0..7). Grade 7 names speak for themselves (Easter
+# Sunday, Ash Wednesday), so no rank word is attached to them.
+RANKS = {
+    0: "",
+    1: "Commemoration",
+    2: "Optional Memorial",
+    3: "Memorial",
+    4: "Feast",
+    5: "Feast of the Lord",
+    6: "Solemnity",
+    7: "",
+}
+
+
+# ----------------------------------------------------------------- calendar
 
 def easter(year: int) -> dt.date:
     """Gregorian Easter, using the Anonymous Gregorian algorithm."""
@@ -40,20 +76,34 @@ def first_sunday_of_advent(year: int) -> dt.date:
     return candidate - dt.timedelta(weeks=3)
 
 
-def liturgical_day(day: dt.date) -> tuple[str, str]:
-    """Return a useful broad Roman-calendar season and its ordinary color.
-
-    This intentionally does not claim to replace an episcopal conference's
-    calendar: local solemnities and optional memorials belong to the linked
-    official readings page.
-    """
+def season_of(day: dt.date) -> str:
+    """Broad Roman-calendar season, used offline and to pick Easter prayers."""
     year_easter = easter(day.year)
     ash_wednesday = year_easter - dt.timedelta(days=46)
-    palm_sunday = year_easter - dt.timedelta(days=7)
     pentecost = year_easter + dt.timedelta(days=49)
     advent = first_sunday_of_advent(day.year)
     christmas = dt.date(day.year, 12, 25)
     epiphany_end = dt.date(day.year, 1, 12)
+    if ash_wednesday <= day < year_easter:
+        return "Lent"
+    if year_easter <= day <= pentecost:
+        return "Easter"
+    if advent <= day < christmas:
+        return "Advent"
+    if day >= christmas or day <= epiphany_end:
+        return "Christmas"
+    return "Ordinary Time"
+
+
+def liturgical_day(day: dt.date) -> tuple[str, str]:
+    """Offline fallback: a broad season or major fixed solemnity and its color.
+
+    The Liturgical Calendar API supplies the precise celebration when the
+    network is available; this keeps the panel truthful without it.
+    """
+    year_easter = easter(day.year)
+    palm_sunday = year_easter - dt.timedelta(days=7)
+    pentecost = year_easter + dt.timedelta(days=49)
 
     fixed = {
         (1, 1): ("Solemnity of Mary, Mother of God", "white"),
@@ -73,74 +123,309 @@ def liturgical_day(day: dt.date) -> tuple[str, str]:
         return "Easter Sunday", "white"
     if day == pentecost:
         return "Pentecost Sunday", "red"
-    if ash_wednesday <= day < year_easter:
-        return "Lent", "violet"
-    if year_easter < day < pentecost:
-        return "Easter Season", "white"
-    if advent <= day < christmas:
-        return "Advent", "violet"
-    if day >= christmas or day <= epiphany_end:
-        return "Christmas Season", "white"
-    return "Ordinary Time", "green"
+    season = season_of(day)
+    colors = {"Lent": "violet", "Easter": "white", "Advent": "violet", "Christmas": "white", "Ordinary Time": "green"}
+    label = season if season in ("Lent", "Advent") else season + (" Season" if season != "Ordinary Time" else "")
+    return label, colors[season]
 
 
 def mysteries(day: dt.date) -> tuple[str, list[str]]:
-    sets = {
-        0: ("Joyful Mysteries", ["The Annunciation", "The Visitation", "The Nativity", "The Presentation", "The Finding in the Temple"]),
-        1: ("Sorrowful Mysteries", ["The Agony in the Garden", "The Scourging at the Pillar", "The Crowning with Thorns", "The Carrying of the Cross", "The Crucifixion"]),
-        2: ("Glorious Mysteries", ["The Resurrection", "The Ascension", "The Descent of the Holy Spirit", "The Assumption", "The Coronation of Mary"]),
-        3: ("Luminous Mysteries", ["The Baptism of Jesus", "The Wedding at Cana", "The Proclamation of the Kingdom", "The Transfiguration", "The Institution of the Eucharist"]),
-        4: ("Sorrowful Mysteries", ["The Agony in the Garden", "The Scourging at the Pillar", "The Crowning with Thorns", "The Carrying of the Cross", "The Crucifixion"]),
-        5: ("Joyful Mysteries", ["The Annunciation", "The Visitation", "The Nativity", "The Presentation", "The Finding in the Temple"]),
-        6: ("Glorious Mysteries", ["The Resurrection", "The Ascension", "The Descent of the Holy Spirit", "The Assumption", "The Coronation of Mary"]),
+    joyful = ("Joyful Mysteries", ["The Annunciation", "The Visitation", "The Nativity", "The Presentation", "The Finding in the Temple"])
+    sorrowful = ("Sorrowful Mysteries", ["The Agony in the Garden", "The Scourging at the Pillar", "The Crowning with Thorns", "The Carrying of the Cross", "The Crucifixion"])
+    glorious = ("Glorious Mysteries", ["The Resurrection", "The Ascension", "The Descent of the Holy Spirit", "The Assumption", "The Coronation of Mary"])
+    luminous = ("Luminous Mysteries", ["The Baptism of Jesus", "The Wedding at Cana", "The Proclamation of the Kingdom", "The Transfiguration", "The Institution of the Eucharist"])
+    return {0: joyful, 1: sorrowful, 2: glorious, 3: luminous, 4: sorrowful, 5: joyful, 6: glorious}[day.weekday()]
+
+
+def normalize_color(value: str) -> str:
+    value = str(value or "green").lower()
+    return {"purple": "violet"}.get(value, value)
+
+
+def liturgical_year_label(value: str | None) -> str:
+    """LitCal says "YEAR II" / "YEAR A"; keep the numeral, soften the case."""
+    parts = str(value or "").split()
+    return " ".join(p.capitalize() if p.lower() == "year" else p for p in parts)
+
+
+def week_number(name: str) -> str:
+    match = re.search(r"\b(\d+)(?:st|nd|rd|th) Week", name or "")
+    return match.group(1) if match else ""
+
+
+def celebration_from_litcal(events: list[dict], day: dt.date) -> dict | None:
+    """Pick the day's headline celebration from LitCal's events for that date."""
+    todays = [e for e in events if str(e.get("date", "")).startswith(day.isoformat()) and not e.get("is_vigil_mass")]
+    if not todays:
+        return None
+    primary = max(todays, key=lambda e: (int(e.get("grade") or 0), -todays.index(e)))
+    weekday = next((e for e in todays if int(e.get("grade") or 0) == 0), None)
+    others = [e["name"] for e in todays if e is not primary and e is not weekday]
+    vigil = next((e for e in events if str(e.get("date", "")).startswith(day.isoformat()) and e.get("is_vigil_mass")), None)
+    grade = int(primary.get("grade") or 0)
+    rank = RANKS.get(grade, "")
+    if day.weekday() == 6 and grade >= 5:
+        rank = "Sunday"
+    colors = primary.get("color") or ["green"]
+    week = week_number((weekday or primary).get("name", ""))
+    return {
+        "name": primary.get("name", ""),
+        "rank": rank,
+        "grade": grade,
+        "color": normalize_color(colors[0]),
+        "season": primary.get("liturgical_season_lcl") or season_of(day),
+        "week": week,
+        "weekdayName": weekday.get("name", "") if weekday and weekday is not primary else "",
+        "liturgicalYear": liturgical_year_label((weekday or primary).get("liturgical_year")),
+        "psalterWeek": int((weekday or primary).get("psalter_week") or 0),
+        "alsoToday": others,
+        "vigil": vigil.get("name", "").replace(" Vigil Mass", "") if vigil else "",
+        "readings": {k: v for k, v in (primary.get("readings") or {}).items() if v},
     }
-    return sets[day.weekday()]
 
 
-def load_state() -> dict:
+def celebration_fallback(day: dt.date) -> dict:
+    name, color = liturgical_day(day)
+    return {
+        "name": name,
+        "rank": "",
+        "grade": 0,
+        "color": color,
+        "season": season_of(day),
+        "week": "",
+        "weekdayName": "",
+        "liturgicalYear": "",
+        "psalterWeek": 0,
+        "alsoToday": [],
+        "vigil": "",
+        "readings": {},
+    }
+
+
+# ------------------------------------------------------------------ prayers
+
+def angelus(easter_season: bool) -> dict:
+    if easter_season:
+        return {
+            "key": "reginaCaeli",
+            "title": "Regina Caeli",
+            "subtitle": "Prayed in place of the Angelus during Easter",
+            "lines": [
+                "V. Queen of Heaven, rejoice, alleluia.",
+                "R. For He whom you did merit to bear, alleluia.",
+                "V. Has risen, as He said, alleluia.",
+                "R. Pray for us to God, alleluia.",
+                "V. Rejoice and be glad, O Virgin Mary, alleluia.",
+                "R. For the Lord has truly risen, alleluia.",
+                "",
+                "Let us pray. O God, who gave joy to the world through the resurrection of Thy Son, our Lord Jesus Christ, grant, we beseech Thee, that through the intercession of the Virgin Mary, His Mother, we may obtain the joys of everlasting life. Through the same Christ our Lord. Amen.",
+            ],
+        }
+    return {
+        "key": "angelus",
+        "title": "The Angelus",
+        "subtitle": "Traditionally prayed at morning, noon, and evening",
+        "lines": [
+            "V. The Angel of the Lord declared unto Mary.",
+            "R. And she conceived of the Holy Spirit.",
+            "Hail Mary…",
+            "V. Behold the handmaid of the Lord.",
+            "R. Be it done unto me according to thy word.",
+            "Hail Mary…",
+            "V. And the Word was made flesh.",
+            "R. And dwelt among us.",
+            "Hail Mary…",
+            "V. Pray for us, O holy Mother of God.",
+            "R. That we may be made worthy of the promises of Christ.",
+            "",
+            "Let us pray. Pour forth, we beseech Thee, O Lord, Thy grace into our hearts, that we, to whom the Incarnation of Christ Thy Son was made known by the message of an angel, may by His Passion and Cross be brought to the glory of His Resurrection. Through the same Christ our Lord. Amen.",
+        ],
+    }
+
+
+def prayer_for(now: dt.datetime, easter_season: bool) -> dict:
+    """A traditional (public domain) prayer suited to the hour."""
+    hour = now.hour
+    if 4 <= hour < 11:
+        prayer = {
+            "key": "morningOffering",
+            "title": "Morning Offering",
+            "subtitle": "Begin the day by giving it away",
+            "lines": [
+                "O Jesus, through the Immaculate Heart of Mary, I offer You my prayers, works, joys, and sufferings of this day for all the intentions of Your Sacred Heart, in union with the Holy Sacrifice of the Mass throughout the world, for the salvation of souls, the reparation of sins, the reunion of all Christians, and in particular for the intentions of the Holy Father. Amen.",
+            ],
+        }
+    elif 11 <= hour < 14 or 18 <= hour < 21:
+        prayer = angelus(easter_season)
+    elif 14 <= hour < 18:
+        prayer = {
+            "key": "memorare",
+            "title": "The Memorare",
+            "subtitle": "An afternoon turn toward Our Lady",
+            "lines": [
+                "Remember, O most gracious Virgin Mary, that never was it known that anyone who fled to thy protection, implored thy help, or sought thy intercession was left unaided. Inspired by this confidence, I fly unto thee, O Virgin of virgins, my Mother. To thee do I come, before thee I stand, sinful and sorrowful. O Mother of the Word Incarnate, despise not my petitions, but in thy mercy hear and answer me. Amen.",
+            ],
+        }
+    else:
+        prayer = {
+            "key": "actOfContrition",
+            "title": "Act of Contrition",
+            "subtitle": "Close the day with a brief examen",
+            "lines": [
+                "O my God, I am heartily sorry for having offended Thee, and I detest all my sins because of Thy just punishments, but most of all because they offend Thee, my God, who art all-good and deserving of all my love. I firmly resolve, with the help of Thy grace, to sin no more and to avoid the near occasions of sin. Amen.",
+            ],
+        }
+    slot = "Morning" if 4 <= hour < 11 else "Midday" if 11 <= hour < 14 else "Afternoon" if 14 <= hour < 18 else "Evening" if 18 <= hour < 21 else "Night"
+    prayer["slot"] = slot
+    return prayer
+
+
+# ------------------------------------------------------------------- caches
+
+def read_json(path: pathlib.Path) -> dict:
     try:
-        return json.loads(STATE_FILE.read_text())
+        return json.loads(path.read_text())
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
 
 
+def write_json(path: pathlib.Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
+def fetch(url: str) -> bytes:
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
+    with urllib.request.urlopen(request, timeout=NETWORK_TIMEOUT) as response:
+        return response.read()
+
+
+def calendar_file(year: int) -> pathlib.Path:
+    return CACHE_DIR / f"calendar-US-{year}.json"
+
+
+def load_calendar(year: int) -> list[dict]:
+    return read_json(calendar_file(year)).get("litcal") or []
+
+
+def sync_calendar(year: int) -> bool:
+    if calendar_file(year).exists():
+        return True
+    try:
+        payload = json.loads(fetch(LITCAL_URL.format(year=year)))
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError) as error:
+        print(f"ora: calendar sync failed: {error}", file=sys.stderr)
+        return False
+    if not isinstance(payload.get("litcal"), list):
+        return False
+    slim = [
+        {k: e.get(k) for k in ("date", "name", "grade", "color", "is_vigil_mass", "liturgical_season_lcl", "liturgical_year", "psalter_week", "readings")}
+        for e in payload["litcal"]
+    ]
+    write_json(calendar_file(year), {"fetched": dt.datetime.now().isoformat(timespec="seconds"), "litcal": slim})
+    return True
+
+
+def parse_rss_items(raw: bytes) -> list[dict]:
+    text = raw.decode("utf-8", "replace")
+    items = []
+    for chunk in re.findall(r"<item>(.*?)</item>", text, re.S):
+        def field(tag: str) -> str:
+            match = re.search(rf"<{tag}>(.*?)</{tag}>", chunk, re.S)
+            return html.unescape(match.group(1)).strip() if match else ""
+        items.append({"title": field("title"), "link": field("link"), "description": field("description")})
+    return items
+
+
+def usccb_date(link: str) -> str:
+    match = re.search(r"/readings/(\d{2})(\d{2})(\d{2})\.cfm", link)
+    if not match:
+        return ""
+    month, day, year = match.groups()
+    return f"20{year}-{month}-{day}"
+
+
+def parse_readings(description: str) -> list[dict]:
+    """Citations only. The Lectionary text itself is copyrighted and stays on USCCB's page."""
+    out = []
+    for heading in re.findall(r"<h4>(.*?)</h4>", html.unescape(description), re.S):
+        plain = re.sub(r"<[^>]+>", " ", heading)
+        plain = re.sub(r"\s+", " ", plain).strip()
+        match = re.match(r"^(Reading [1-2]|Reading I{1,2}|Responsorial Psalm|Alleluia|Verse Before the Gospel|Gospel|Sequence)\s+(.+)$", plain, re.I)
+        if not match:
+            continue
+        label, citation = match.groups()
+        label = {"Reading I": "Reading 1", "Reading II": "Reading 2", "Responsorial Psalm": "Psalm", "Verse Before the Gospel": "Verse"}.get(label, label)
+        out.append({"label": label, "citation": citation.strip()})
+    return out
+
+
+def wordonfire_date(title: str) -> str:
+    try:
+        return dt.datetime.strptime(title.strip(), "%A, %B %d, %Y").date().isoformat()
+    except ValueError:
+        return ""
+
+
+def sync_feeds(now: dt.datetime) -> None:
+    feeds = read_json(FEEDS_FILE)
+    fetched = feeds.get("fetched")
+    fresh = False
+    if fetched:
+        try:
+            fresh = now - dt.datetime.fromisoformat(fetched) < FEED_MAX_AGE
+        except ValueError:
+            fresh = False
+    today = now.date().isoformat()
+    have_today = today in feeds.get("usccb", {}) and today in feeds.get("wordonfire", {})
+    if fresh and have_today:
+        return
+    usccb = dict(feeds.get("usccb", {}))
+    wordonfire = dict(feeds.get("wordonfire", {}))
+    try:
+        for item in parse_rss_items(fetch(USCCB_RSS)):
+            key = usccb_date(item["link"])
+            if key:
+                usccb[key] = {"title": item["title"], "link": item["link"], "readings": parse_readings(item["description"])}
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        print(f"ora: USCCB sync failed: {error}", file=sys.stderr)
+    try:
+        for item in parse_rss_items(fetch(WORD_ON_FIRE_RSS)):
+            key = wordonfire_date(item["title"])
+            if key and item["link"].startswith("https://www.wordonfire.org/"):
+                wordonfire[key] = item["link"]
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        print(f"ora: Word on Fire sync failed: {error}", file=sys.stderr)
+    keep_from = (now.date() - dt.timedelta(days=14)).isoformat()
+    write_json(FEEDS_FILE, {
+        "fetched": now.isoformat(timespec="seconds"),
+        "usccb": {k: v for k, v in usccb.items() if k >= keep_from},
+        "wordonfire": {k: v for k, v in wordonfire.items() if k >= keep_from},
+    })
+
+
+def sync(now: dt.datetime) -> None:
+    sync_calendar(now.year)
+    if now.month == 12:
+        sync_calendar(now.year + 1)
+    sync_feeds(now)
+
+
+# -------------------------------------------------------------------- state
+
+def load_state() -> dict:
+    return read_json(STATE_FILE)
+
+
 def save_state(state: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    temporary = STATE_FILE.with_suffix(".tmp")
-    temporary.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
-    temporary.replace(STATE_FILE)
+    write_json(STATE_FILE, state)
 
 
-def today_payload(day: dt.date | None = None) -> dict:
-    day = day or dt.date.today()
-    season, color = liturgical_day(day)
-    mystery_name, mystery_items = mysteries(day)
-    state = load_state().get(day.isoformat(), {})
-    reading_path = day.strftime("%m%d%y") + ".cfm"
-    return {
-        "date": day.isoformat(),
-        "dateLabel": day.strftime("%A, %B %-d"),
-        "liturgicalDay": season,
-        "liturgicalColor": color,
-        "mysteryName": mystery_name,
-        "mysteries": mystery_items,
-        "completed": {
-            "readings": bool(state.get("readings")),
-            "rosary": bool(state.get("rosary")),
-        },
-        "links": {
-            "readings": "https://www.wordonfire.org/reflections/",
-            "usccb": "https://bible.usccb.org/bible/readings/" + reading_path,
-            "rosary": "https://www.usccb.org/how-to-pray-the-rosary",
-            "hallow": "https://hallow.com/",
-            "bibleInAYear": "https://app.ascensionpress.com/podcasts/bible",
-        },
-    }
-
-
-def set_completed(kind: str, value: bool) -> None:
+def set_completed(kind: str, value: bool, day: dt.date | None = None) -> None:
     state = load_state()
-    key = dt.date.today().isoformat()
+    key = (day or dt.date.today()).isoformat()
     record = state.setdefault(key, {})
     record[kind] = value
     # Bound a purely local convenience file so it never becomes a diary by accident.
@@ -149,12 +434,108 @@ def set_completed(kind: str, value: bool) -> None:
     save_state(state)
 
 
-def notify(title: str, body: str) -> None:
-    command = ["omarchy-notification-send", title, body]
+def week_strip(state: dict, day: dt.date) -> list[dict]:
+    out = []
+    for offset in range(6, -1, -1):
+        d = day - dt.timedelta(days=offset)
+        record = state.get(d.isoformat(), {})
+        out.append({
+            "date": d.isoformat(),
+            "letter": d.strftime("%a")[0],
+            "readings": bool(record.get("readings")),
+            "rosary": bool(record.get("rosary")),
+            "prayer": bool(record.get("prayer")),
+            "isToday": offset == 0,
+        })
+    return out
+
+
+def streak(state: dict, day: dt.date) -> int:
+    """Consecutive days, ending today or yesterday, with any part of the rule kept."""
+    def kept(d: dt.date) -> bool:
+        record = state.get(d.isoformat(), {})
+        return any(record.get(k) for k in COMPLETABLE)
+
+    start = day if kept(day) else day - dt.timedelta(days=1)
+    count = 0
+    while kept(start):
+        count += 1
+        start -= dt.timedelta(days=1)
+    return count
+
+
+# ------------------------------------------------------------------ payload
+
+def today_payload(now: dt.datetime | dt.date | None = None) -> dict:
+    now = now or dt.datetime.now()
+    if not isinstance(now, dt.datetime):
+        now = dt.datetime.combine(now, dt.time(12, 0))
+    day = now.date()
+    events = load_calendar(day.year)
+    celebration = celebration_from_litcal(events, day) if events else None
+    source = "litcal" if celebration else "builtin"
+    celebration = celebration or celebration_fallback(day)
+
+    feeds = read_json(FEEDS_FILE)
+    usccb_today = feeds.get("usccb", {}).get(day.isoformat(), {})
+    readings = usccb_today.get("readings") or [
+        {"label": label, "citation": citation}
+        for label, citation in (
+            ("Reading 1", celebration["readings"].get("first_reading", "")),
+            ("Psalm", celebration["readings"].get("responsorial_psalm", "")),
+            ("Reading 2", celebration["readings"].get("second_reading", "")),
+            ("Gospel", celebration["readings"].get("gospel", "")),
+        )
+        if citation
+    ]
+    gospel = next((r["citation"] for r in readings if r["label"] == "Gospel"), "")
+
+    mystery_name, mystery_items = mysteries(day)
+    state = load_state()
+    completed = {k: bool(state.get(day.isoformat(), {}).get(k)) for k in COMPLETABLE}
+    reading_path = day.strftime("%m%d%y") + ".cfm"
+    reflection = feeds.get("wordonfire", {}).get(day.isoformat()) or "https://www.wordonfire.org/reflections/"
+
+    return {
+        "date": day.isoformat(),
+        "dateLabel": day.strftime("%A, %B %-d"),
+        "dateShort": day.strftime("%a %b %-d"),
+        "source": source,
+        "celebration": celebration,
+        # Kept for compatibility with the bar tooltip and older callers.
+        "liturgicalDay": celebration["name"],
+        "liturgicalColor": celebration["color"],
+        "readings": readings,
+        "gospel": gospel,
+        "readingsTitle": usccb_today.get("title", ""),
+        "mysteryName": mystery_name,
+        "mysteries": mystery_items,
+        "prayer": prayer_for(now, season_of(day) == "Easter"),
+        "completed": completed,
+        "progress": sum(1 for v in completed.values() if v),
+        "week": week_strip(state, day),
+        "streak": streak(state, day),
+        "links": {
+            "readings": reflection,
+            "usccb": usccb_today.get("link") or "https://bible.usccb.org/bible/readings/" + reading_path,
+            "rosary": "https://www.usccb.org/how-to-pray-the-rosary",
+            "hallow": "https://hallow.com/",
+            "bibleInAYear": "https://app.ascensionpress.com/podcasts/bible",
+            "calendar": "https://bible.usccb.org/bible/readings/calendar",
+        },
+    }
+
+
+# ------------------------------------------------------------------ actions
+
+def notify(title: str, body: str, url: str = "") -> None:
+    command = ["omarchy-notification-send", "--app-name", "Ora", "-g", CROSS_GLYPH, "-u", "normal", title, body]
+    if url:
+        command += ["--exec", "xdg-open", url]
     try:
         subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
-        subprocess.Popen(["notify-send", title, body], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(["notify-send", "-a", "Ora", title, body], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def open_url(url: str) -> None:
@@ -164,32 +545,46 @@ def open_url(url: str) -> None:
     subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def reminder(kind: str, payload: dict) -> tuple[str, str, str]:
+    celebration = payload["celebration"]
+    if kind == "readings":
+        parts = [celebration["name"]]
+        if payload.get("gospel"):
+            parts.append("Gospel · " + payload["gospel"])
+        return "Today's Mass readings", "\n".join(parts), payload["links"]["readings"]
+    if kind == "angelus":
+        prayer = angelus(season_of(dt.date.today()) == "Easter")
+        return prayer["title"], prayer["lines"][0].removeprefix("V. "), ""
+    return "Pray the Rosary", payload["mysteryName"] + " today.", payload["links"]["rosary"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     today_parser = sub.add_parser("today")
-    today_parser.add_argument("--date", help="ISO date, useful for tests")
+    today_parser.add_argument("--date", help="ISO date (or datetime), useful for tests")
+    today_parser.add_argument("--sync", action="store_true", help="refresh network caches first")
+    sub.add_parser("sync")
     complete_parser = sub.add_parser("complete")
-    complete_parser.add_argument("kind", choices=("readings", "rosary"))
+    complete_parser.add_argument("kind", choices=COMPLETABLE)
     complete_parser.add_argument("value", nargs="?", default="true", choices=("true", "false"))
     notify_parser = sub.add_parser("notify")
     notify_parser.add_argument("kind", choices=("readings", "angelus", "rosary"))
     open_parser = sub.add_parser("open")
-    open_parser.add_argument("provider", choices=("readings", "rosary", "usccb", "hallow", "bibleInAYear"))
+    open_parser.add_argument("provider", choices=("readings", "usccb", "rosary", "hallow", "bibleInAYear", "calendar"))
     args = parser.parse_args()
 
     if args.command == "today":
-        selected = dt.date.fromisoformat(args.date) if args.date else None
-        print(json.dumps(today_payload(selected), separators=(",", ":")))
+        now = dt.datetime.fromisoformat(args.date) if args.date else dt.datetime.now()
+        if args.sync:
+            sync(now)
+        print(json.dumps(today_payload(now), separators=(",", ":")))
+    elif args.command == "sync":
+        sync(dt.datetime.now())
     elif args.command == "complete":
         set_completed(args.kind, args.value == "true")
     elif args.command == "notify":
-        messages = {
-            "readings": ("Ora · Mass readings", "Take a few quiet minutes with today's Word."),
-            "angelus": ("Ora · The Angelus", "The Angel of the Lord declared unto Mary."),
-            "rosary": ("Ora · Rosary", mysteries(dt.date.today())[0] + " today."),
-        }
-        notify(*messages[args.kind])
+        notify(*reminder(args.kind, today_payload()))
     elif args.command == "open":
         if args.provider in ("readings", "rosary"):
             set_completed(args.provider, True)
