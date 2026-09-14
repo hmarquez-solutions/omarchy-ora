@@ -4,6 +4,10 @@ Catholic daily prayer in the Omarchy bar: today's feast or saint, the Mass readi
 
 A quiet rule of prayer, one click away.
 
+<p align="center">
+  <img src="docs/panel.png" alt="The Ora panel open in the Omarchy bar: today's feast, Mass reading citations, the Rosary mysteries, the prayer of the hour, and the week's rule" width="406">
+</p>
+
 Ora puts the liturgical day, the Mass readings, the Rosary, and a prayer for the hour one click away. It uses local state, native Omarchy notifications, and links to trusted providers—no account, no analytics, no bundled copyrighted content.
 
 ## Features

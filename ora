@@ -388,18 +388,37 @@ def usccb_date(link: str) -> str:
     return f"20{year}-{month}-{day}"
 
 
+# A tag, with quoted attribute values allowed to contain ">" and "<". USCCB's
+# feed writes href="...route?<nolink> " on a heading with no citation, and a
+# naive <[^>]+> stops at that inner ">" and leaves '">' behind as the citation.
+TAG = re.compile(r"""<(?:[^>"']|"[^"]*"|'[^']*')*>""", re.S)
+
+
+def strip_tags(fragment: str) -> str:
+    return re.sub(r"\s+", " ", TAG.sub(" ", fragment)).strip()
+
+
+def valid_citation(text: str) -> bool:
+    """A scripture citation always carries a chapter number and never markup."""
+    text = str(text or "")
+    return bool(re.search(r"[0-9]", text)) and not re.search(r"""[<>"']""", text)
+
+
 def parse_readings(description: str) -> list[dict]:
     """Citations only. The Lectionary text itself is copyrighted and stays on USCCB's page."""
     out = []
     for heading in re.findall(r"<h4>(.*?)</h4>", html.unescape(description), re.S):
-        plain = re.sub(r"<[^>]+>", " ", heading)
-        plain = re.sub(r"\s+", " ", plain).strip()
+        plain = strip_tags(heading)
         match = re.match(r"^(Reading [1-2]|Reading I{1,2}|Responsorial Psalm|Alleluia|Verse Before the Gospel|Gospel|Sequence)\s+(.+)$", plain, re.I)
         if not match:
             continue
         label, citation = match.groups()
         label = {"Reading I": "Reading 1", "Reading II": "Reading 2", "Responsorial Psalm": "Psalm", "Verse Before the Gospel": "Verse"}.get(label, label)
-        out.append({"label": label, "citation": citation.strip()})
+        citation = citation.strip()
+        # A heading with no scripture reference (a non-biblical Alleluia verse,
+        # or a feed glitch) is left out rather than shown as a stray fragment.
+        if valid_citation(citation):
+            out.append({"label": label, "citation": citation})
     return out
 
 
@@ -519,7 +538,10 @@ def today_payload(now: dt.datetime | dt.date | None = None) -> dict:
 
     feeds = read_json(FEEDS_FILE)
     usccb_today = feeds.get("usccb", {}).get(day.isoformat(), {})
-    readings = usccb_today.get("readings") or [
+    # Re-check cached rows too, so a cache written before the parser learned a
+    # feed quirk heals on the next read instead of after the next refresh.
+    cached = [r for r in usccb_today.get("readings") or [] if valid_citation(r.get("citation"))]
+    readings = cached or [
         {"label": label, "citation": citation}
         for label, citation in (
             ("Reading 1", celebration["readings"].get("first_reading", "")),

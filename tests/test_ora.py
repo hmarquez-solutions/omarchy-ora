@@ -90,6 +90,27 @@ class FeedTests(unittest.TestCase):
         # Only citations are kept; the copyrighted Lectionary text never leaves USCCB's page.
         self.assertNotIn("text", json.dumps(readings))
 
+    def test_alleluia_without_a_citation_is_dropped_not_mangled(self):
+        # Verbatim from USCCB's feed for 2026-09-14 (after one unescape): the
+        # href carries a literal <nolink>, which used to leave '">' as the citation.
+        description = (
+            '<h4>Reading 1  <a href="https://bible.usccb.org/bible/numbers/21?4 ">Numbers 21:4b-9</a></h4>'
+            '<h4>Alleluia <a href="https://bible.usccb.orgroute?&lt;nolink&gt; "> </a></h4>'
+            '<h4>Gospel  <a href="https://bible.usccb.org/bible/john/3?13 ">John 3:13-17</a></h4>'
+        )
+        readings = ora.parse_readings(description)
+        self.assertEqual([r["label"] for r in readings], ["Reading 1", "Gospel"])
+        self.assertEqual(readings[-1]["citation"], "John 3:13-17")
+        for r in readings:
+            self.assertNotRegex(r["citation"], r'[<>"]')
+
+    def test_valid_citation(self):
+        self.assertTrue(ora.valid_citation("See John 17:17b, 17a"))
+        self.assertTrue(ora.valid_citation("Sirach 27:30\u201428:7"))
+        self.assertFalse(ora.valid_citation('">'))
+        self.assertFalse(ora.valid_citation(""))
+        self.assertFalse(ora.valid_citation("Alleluia"))
+
     def test_wordonfire_date(self):
         self.assertEqual(ora.wordonfire_date("Wednesday, September 2, 2026"), "2026-09-02")
         self.assertEqual(ora.wordonfire_date("Daily Gospel Reflections - Word on Fire"), "")
@@ -147,6 +168,18 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(payload["streak"], 2)
         self.assertTrue(payload["week"][-1]["rosary"])
         self.assertTrue(payload["week"][-2]["readings"])
+
+    def test_bad_cached_citations_are_filtered_on_read(self):
+        ora.write_json(ora.FEEDS_FILE, {
+            "fetched": "2026-09-14T08:00:00",
+            "usccb": {"2026-09-14": {"title": "Feast", "link": "https://bible.usccb.org/bible/readings/091426.cfm",
+                                     "readings": [{"label": "Alleluia", "citation": '">'},
+                                                  {"label": "Gospel", "citation": "John 3:13-17"}]}},
+            "wordonfire": {},
+        })
+        payload = ora.today_payload(dt.datetime(2026, 9, 14, 12, 0))
+        self.assertEqual([r["label"] for r in payload["readings"]], ["Gospel"])
+        self.assertEqual(payload["gospel"], "John 3:13-17")
 
     def test_streak_survives_an_unfinished_today(self):
         state = {"2026-09-01": {"readings": True}, "2026-08-31": {"rosary": True}}
