@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3 -I
 """Local data and actions for the Ora Omarchy plugin.
 
 `ora today` is cache-only and fast; it is what the panel reads. `ora today
@@ -23,13 +23,36 @@ import urllib.request
 
 
 PLUGIN_ID = "io.github.hmarquez-solutions.ora"
-USER_AGENT = "Ora/0.2 (Omarchy bar plugin; +https://github.com/hmarquez-solutions/omarchy-ora)"
+USER_AGENT = "Ora/0.2.1 (Omarchy bar plugin; +https://github.com/hmarquez-solutions/omarchy-ora)"
 STATE_DIR = pathlib.Path(os.environ.get("XDG_STATE_HOME", pathlib.Path.home() / ".local/state")) / "omarchy" / "ora"
 CACHE_DIR = pathlib.Path(os.environ.get("XDG_CACHE_HOME", pathlib.Path.home() / ".cache")) / "omarchy" / "ora"
 STATE_FILE = STATE_DIR / "state.json"
 FEEDS_FILE = CACHE_DIR / "feeds.json"
 FEED_MAX_AGE = dt.timedelta(hours=6)
 NETWORK_TIMEOUT = 10
+# The calendar for a year is about half a megabyte and the two feeds together
+# under one; anything much bigger is not the document Ora asked for.
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
+# Fixed paths for everything Ora executes. The panel starts this script with a
+# cleared environment, so nothing in the session may pick which program a
+# click or a reminder runs.
+XDG_OPEN = "/usr/bin/xdg-open"
+NOTIFY_SEND = "/usr/bin/omarchy-notification-send"
+NOTIFY_SEND_FALLBACK = "/usr/bin/notify-send"
+
+# Every URL Ora fetches or hands to the browser lives on one of these hosts.
+# Links that arrive in a feed are checked against it when cached and again
+# when read back or opened, so a cache written by an older version cannot
+# smuggle a link in either.
+TRUSTED_HOSTS = frozenset({
+    "litcal.johnromanodorazio.com",
+    "bible.usccb.org",
+    "www.usccb.org",
+    "www.wordonfire.org",
+    "hallow.com",
+    "app.ascensionpress.com",
+})
 
 LITCAL_URL = "https://litcal.johnromanodorazio.com/api/dev/calendar/nation/US/{year}?year_type=CIVIL"
 USCCB_RSS = "https://bible.usccb.org/readings.rss"
@@ -296,10 +319,28 @@ def write_json(path: pathlib.Path, payload: dict) -> None:
     temporary.replace(path)
 
 
+def trusted_url(url: str) -> bool:
+    """HTTPS, on a listed host, with no userinfo that could disguise the host."""
+    parsed = urllib.parse.urlsplit(str(url or ""))
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname in TRUSTED_HOSTS
+        and parsed.username is None
+        and parsed.password is None
+    )
+
+
 def fetch(url: str) -> bytes:
+    if not trusted_url(url):
+        raise ValueError(f"refusing to fetch {url!r}: not a trusted https host")
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
     with urllib.request.urlopen(request, timeout=NETWORK_TIMEOUT) as response:
-        return response.read()
+        if not trusted_url(response.geturl()):
+            raise ValueError("redirected off a trusted host")
+        body = response.read(MAX_RESPONSE_BYTES + 1)
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise ValueError("response larger than the allowed size")
+        return body
 
 
 def calendar_file(year: int) -> pathlib.Path:
@@ -387,14 +428,14 @@ def sync_feeds(now: dt.datetime) -> None:
     try:
         for item in parse_rss_items(fetch(USCCB_RSS)):
             key = usccb_date(item["link"])
-            if key:
+            if key and trusted_url(item["link"]):
                 usccb[key] = {"title": item["title"], "link": item["link"], "readings": parse_readings(item["description"])}
     except (urllib.error.URLError, OSError, ValueError) as error:
         print(f"ora: USCCB sync failed: {error}", file=sys.stderr)
     try:
         for item in parse_rss_items(fetch(WORD_ON_FIRE_RSS)):
             key = wordonfire_date(item["title"])
-            if key and item["link"].startswith("https://www.wordonfire.org/"):
+            if key and trusted_url(item["link"]) and urllib.parse.urlsplit(item["link"]).hostname == "www.wordonfire.org":
                 wordonfire[key] = item["link"]
     except (urllib.error.URLError, OSError, ValueError) as error:
         print(f"ora: Word on Fire sync failed: {error}", file=sys.stderr)
@@ -494,7 +535,12 @@ def today_payload(now: dt.datetime | dt.date | None = None) -> dict:
     state = load_state()
     completed = {k: bool(state.get(day.isoformat(), {}).get(k)) for k in COMPLETABLE}
     reading_path = day.strftime("%m%d%y") + ".cfm"
-    reflection = feeds.get("wordonfire", {}).get(day.isoformat()) or "https://www.wordonfire.org/reflections/"
+    reflection = feeds.get("wordonfire", {}).get(day.isoformat()) or ""
+    if not trusted_url(reflection):
+        reflection = "https://www.wordonfire.org/reflections/"
+    usccb_link = usccb_today.get("link") or ""
+    if not trusted_url(usccb_link):
+        usccb_link = "https://bible.usccb.org/bible/readings/" + reading_path
 
     return {
         "date": day.isoformat(),
@@ -517,7 +563,7 @@ def today_payload(now: dt.datetime | dt.date | None = None) -> dict:
         "streak": streak(state, day),
         "links": {
             "readings": reflection,
-            "usccb": usccb_today.get("link") or "https://bible.usccb.org/bible/readings/" + reading_path,
+            "usccb": usccb_link,
             "rosary": "https://www.usccb.org/how-to-pray-the-rosary",
             "hallow": "https://hallow.com/",
             "bibleInAYear": "https://app.ascensionpress.com/podcasts/bible",
@@ -529,20 +575,19 @@ def today_payload(now: dt.datetime | dt.date | None = None) -> dict:
 # ------------------------------------------------------------------ actions
 
 def notify(title: str, body: str, url: str = "") -> None:
-    command = ["omarchy-notification-send", "--app-name", "Ora", "-g", CROSS_GLYPH, "-u", "normal", title, body]
-    if url:
-        command += ["--exec", "xdg-open", url]
+    command = [NOTIFY_SEND, "--app-name", "Ora", "-g", CROSS_GLYPH, "-u", "normal", title, body]
+    if url and trusted_url(url):
+        command += ["--exec", XDG_OPEN, url]
     try:
         subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
-        subprocess.Popen(["notify-send", "-a", "Ora", title, body], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen([NOTIFY_SEND_FALLBACK, "-a", "Ora", title, body], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def open_url(url: str) -> None:
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or not parsed.netloc:
-        raise ValueError("Ora only opens HTTPS links")
-    subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not trusted_url(url):
+        raise ValueError("Ora only opens HTTPS links on its listed providers")
+    subprocess.Popen([XDG_OPEN, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def reminder(kind: str, payload: dict) -> tuple[str, str, str]:

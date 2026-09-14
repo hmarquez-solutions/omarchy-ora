@@ -154,5 +154,84 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(ora.streak({}, dt.date(2026, 9, 2)), 0)
 
 
+class SecurityTests(unittest.TestCase):
+    """The properties the marketplace review asked of the Galaxy Buds plugin, held here too."""
+
+    def test_fixed_interpreter(self):
+        first = (ROOT / "ora").read_text().splitlines()[0]
+        self.assertEqual(first, "#!/usr/bin/python3 -I")
+
+    def test_every_spawned_program_has_an_absolute_path(self):
+        for name in (ora.XDG_OPEN, ora.NOTIFY_SEND, ora.NOTIFY_SEND_FALLBACK):
+            self.assertTrue(name.startswith("/usr/bin/"), name)
+        source = (ROOT / "ora").read_text()
+        for bare in ('"xdg-open"', '"notify-send"', '"omarchy-notification-send"'):
+            self.assertNotIn(bare, source)
+
+    def test_trusted_url(self):
+        self.assertTrue(ora.trusted_url("https://bible.usccb.org/bible/readings/091426.cfm"))
+        self.assertTrue(ora.trusted_url("https://www.wordonfire.org/reflections/x/"))
+        self.assertTrue(ora.trusted_url("https://WWW.USCCB.ORG/how-to-pray-the-rosary"))
+        self.assertFalse(ora.trusted_url("http://bible.usccb.org/bible/readings/091426.cfm"))
+        self.assertFalse(ora.trusted_url("https://evil.example/bible.usccb.org"))
+        self.assertFalse(ora.trusted_url("https://bible.usccb.org@evil.example/"))
+        self.assertFalse(ora.trusted_url("https://bible.usccb.org.evil.example/"))
+        self.assertFalse(ora.trusted_url("file:///etc/passwd"))
+        self.assertFalse(ora.trusted_url(""))
+        self.assertFalse(ora.trusted_url(None))
+
+    def test_open_url_refuses_untrusted(self):
+        with self.assertRaises(ValueError):
+            ora.open_url("https://evil.example/")
+        with self.assertRaises(ValueError):
+            ora.open_url("http://bible.usccb.org/")
+
+    def test_fetch_refuses_untrusted_without_touching_the_network(self):
+        with self.assertRaises(ValueError):
+            ora.fetch("https://evil.example/feed")
+
+    def test_every_default_link_is_trusted(self):
+        payload = ora.today_payload(dt.date(2026, 8, 30))
+        for name, url in payload["links"].items():
+            self.assertTrue(ora.trusted_url(url), (name, url))
+        for url in (ora.LITCAL_URL.format(year=2026), ora.USCCB_RSS, ora.WORD_ON_FIRE_RSS):
+            self.assertTrue(ora.trusted_url(url), url)
+
+
+class FeedLinkTests(PayloadTests):
+    def test_untrusted_feed_links_are_not_cached(self):
+        rss = (
+            "<rss><channel>"
+            "<item><title>Wednesday</title><link>https://bible.usccb.org/bible/readings/090226.cfm</link><description></description></item>"
+            "<item><title>Thursday</title><link>https://evil.example/bible/readings/090326.cfm</link><description></description></item>"
+            "</channel></rss>"
+        ).encode()
+        wof = (
+            "<rss><channel>"
+            "<item><title>Wednesday, September 2, 2026</title><link>https://www.wordonfire.org/reflections/ok/</link></item>"
+            "<item><title>Thursday, September 3, 2026</title><link>https://evil.example/reflections/</link></item>"
+            "</channel></rss>"
+        ).encode()
+        saved = ora.fetch
+        ora.fetch = lambda url: rss if url == ora.USCCB_RSS else wof
+        try:
+            ora.sync_feeds(dt.datetime(2026, 9, 2, 8, 0))
+        finally:
+            ora.fetch = saved
+        feeds = ora.read_json(ora.FEEDS_FILE)
+        self.assertEqual(sorted(feeds["usccb"]), ["2026-09-02"])
+        self.assertEqual(sorted(feeds["wordonfire"]), ["2026-09-02"])
+
+    def test_untrusted_cached_links_fall_back_to_defaults(self):
+        ora.write_json(ora.FEEDS_FILE, {
+            "fetched": "2026-09-02T08:00:00",
+            "usccb": {"2026-09-02": {"title": "Wednesday", "link": "https://evil.example/x", "readings": []}},
+            "wordonfire": {"2026-09-02": "http://www.wordonfire.org/reflections/plain-http/"},
+        })
+        payload = ora.today_payload(dt.datetime(2026, 9, 2, 12, 0))
+        self.assertEqual(payload["links"]["usccb"], "https://bible.usccb.org/bible/readings/090226.cfm")
+        self.assertEqual(payload["links"]["readings"], "https://www.wordonfire.org/reflections/")
+
+
 if __name__ == "__main__":
     unittest.main()

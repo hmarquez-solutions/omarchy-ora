@@ -2,20 +2,29 @@
   "schemaVersion": 1,
   "id": "io.github.hmarquez-solutions.ora",
   "name": "Ora",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "Hector Marquez",
   "license": "MIT",
-  "description": "A quiet Catholic rule of prayer in the Omarchy bar.",
-  "kinds": ["bar-widget"],
+  "description": "Catholic daily prayer in the Omarchy bar: today's feast or saint and liturgical color, Mass reading citations with Word on Fire and USCCB links, the day's Rosary mysteries, a prayer for the hour, reminders, and a streak for keeping your rule.",
+  "kinds": [
+    "bar-widget"
+  ],
   "activation": "on-demand",
   "entryPoints": {
     "barWidget": "Panel.qml"
   },
   "barWidget": {
     "displayName": "Ora",
-    "description": "Today's celebration and readings, Rosary mysteries, a prayer for the hour, reminders, and trusted Catholic resources.",
+    "description": "Today's celebration, Mass readings, Rosary mysteries, a prayer for the hour, reminders, and links to Word on Fire, USCCB, Hallow and Bible in a Year.",
     "category": "Lifestyle",
-    "aliases": ["ora", "catholic", "prayer", "rosary", "mass", "saint"],
+    "aliases": [
+      "ora",
+      "catholic",
+      "prayer",
+      "rosary",
+      "mass",
+      "saint"
+    ],
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
