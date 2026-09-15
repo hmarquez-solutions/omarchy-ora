@@ -28,14 +28,6 @@ Ora puts the liturgical day, the Mass readings, the Rosary, and a prayer for the
 omarchy plugin add https://github.com/hmarquez-solutions/omarchy-ora --enable
 ```
 
-If your Omarchy version expects a manual clone:
-
-```bash
-git clone https://github.com/hmarquez-solutions/omarchy-ora \
-  ~/.config/omarchy/plugins/io.github.hmarquez-solutions.ora
-omarchy-shell shell rescanPlugins
-```
-
 Then add **Ora** to the bar from Omarchy's bar settings. The plugin defaults to the right section.
 
 Nothing is installed outside the plugin folder: no daemon, no service, no
