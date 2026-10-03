@@ -191,6 +191,12 @@ def celebration_from_litcal(events: list[dict], day: dt.date) -> dict | None:
         rank = "Sunday"
     colors = primary.get("color") or ["green"]
     week = week_number((weekday or primary).get("name", ""))
+    # Some memorials refer to a Common with a string instead of a citation
+    # mapping. Keep the celebration; the USCCB feed supplies readings when
+    # available. Check on read so existing yearly caches work too.
+    readings = primary.get("readings")
+    if not isinstance(readings, dict):
+        readings = {}
     return {
         "name": primary.get("name", ""),
         "rank": rank,
@@ -203,7 +209,7 @@ def celebration_from_litcal(events: list[dict], day: dt.date) -> dict | None:
         "psalterWeek": int((weekday or primary).get("psalter_week") or 0),
         "alsoToday": others,
         "vigil": vigil.get("name", "").replace(" Vigil Mass", "") if vigil else "",
-        "readings": {k: v for k, v in (primary.get("readings") or {}).items() if v},
+        "readings": {k: v for k, v in readings.items() if v},
     }
 
 

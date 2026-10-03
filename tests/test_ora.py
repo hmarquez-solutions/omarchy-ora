@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import subprocess
 import tempfile
 import unittest
 
@@ -151,6 +152,26 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(payload["progress"], 0)
         self.assertEqual(len(payload["week"]), 7)
         self.assertTrue(payload["week"][-1]["isToday"])
+
+    def test_today_cli_with_common_readings_reference(self):
+        # LitCal uses a string for some memorials instead of citation fields.
+        # Exercise the same cache -> CLI -> JSON path the QML service uses.
+        ora.write_json(ora.CACHE_DIR / "omarchy" / "ora" / "calendar-US-2026.json", {"litcal": [
+            litcal_event("2026-10-03", "Saturday Memorial of the Blessed Virgin Mary", 2,
+                         "white", readings="From the Common of the Blessed Virgin Mary"),
+        ]})
+        result = subprocess.run(
+            ["/usr/bin/python3", "-I", str(ROOT / "ora"), "today", "--date", "2026-10-03"],
+            env={"XDG_CACHE_HOME": str(ora.CACHE_DIR),
+                 "XDG_STATE_HOME": str(ora.STATE_DIR)},
+            capture_output=True, text=True, timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["date"], "2026-10-03")
+        self.assertEqual(payload["celebration"]["name"], "Saturday Memorial of the Blessed Virgin Mary")
+        self.assertEqual(payload["celebration"]["readings"], {})
+        self.assertEqual(payload["readings"], [])
 
     def test_cached_feeds_and_completion(self):
         ora.write_json(ora.FEEDS_FILE, {
