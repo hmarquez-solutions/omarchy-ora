@@ -1,0 +1,4 @@
+# Ruff defaults, targeting the Python CI runs on.
+target-version = "py312"
+# The ora entry point is a Python script without a .py extension.
+extend-include = ["ora"]

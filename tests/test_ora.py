@@ -2,12 +2,10 @@ import datetime as dt
 import importlib.machinery
 import importlib.util
 import json
-import os
 import pathlib
 import subprocess
 import tempfile
 import unittest
-
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 loader = importlib.machinery.SourceFileLoader("ora", str(ROOT / "ora"))
@@ -17,8 +15,17 @@ loader.exec_module(ora)
 
 
 def litcal_event(date, name, grade, color="green", **extra):
-    event = {"date": f"{date}T00:00:00+00:00", "name": name, "grade": grade, "color": [color], "is_vigil_mass": None,
-             "liturgical_season_lcl": "Ordinary Time", "liturgical_year": "YEAR II", "psalter_week": 2, "readings": {}}
+    event = {
+        "date": f"{date}T00:00:00+00:00",
+        "name": name,
+        "grade": grade,
+        "color": [color],
+        "is_vigil_mass": None,
+        "liturgical_season_lcl": "Ordinary Time",
+        "liturgical_year": "YEAR II",
+        "psalter_week": 2,
+        "readings": {},
+    }
     event.update(extra)
     return event
 
@@ -29,9 +36,15 @@ class CalendarTests(unittest.TestCase):
         self.assertEqual(ora.easter(2027), dt.date(2027, 3, 28))
 
     def test_major_days(self):
-        self.assertEqual(ora.liturgical_day(dt.date(2026, 4, 5)), ("Easter Sunday", "white"))
-        self.assertEqual(ora.liturgical_day(dt.date(2026, 5, 24)), ("Pentecost Sunday", "red"))
-        self.assertEqual(ora.liturgical_day(dt.date(2026, 12, 8)), ("Immaculate Conception", "white"))
+        self.assertEqual(
+            ora.liturgical_day(dt.date(2026, 4, 5)), ("Easter Sunday", "white")
+        )
+        self.assertEqual(
+            ora.liturgical_day(dt.date(2026, 5, 24)), ("Pentecost Sunday", "red")
+        )
+        self.assertEqual(
+            ora.liturgical_day(dt.date(2026, 12, 8)), ("Immaculate Conception", "white")
+        )
 
     def test_seasons(self):
         self.assertEqual(ora.liturgical_day(dt.date(2026, 3, 1))[0], "Lent")
@@ -49,9 +62,26 @@ class LitCalTests(unittest.TestCase):
     def test_optional_memorial_headlines_over_weekday(self):
         events = [
             litcal_event("2026-09-05", "Saturday of the 22nd Week of Ordinary Time", 0),
-            litcal_event("2026-09-05", "Saint Teresa of Calcutta, Virgin", 2, "white", liturgical_year=None),
-            litcal_event("2026-09-05", "Saturday Memorial of the Blessed Virgin Mary", 2, "white", liturgical_year=None),
-            litcal_event("2026-09-05", "23rd Sunday of Ordinary Time Vigil Mass", 5, is_vigil_mass=True),
+            litcal_event(
+                "2026-09-05",
+                "Saint Teresa of Calcutta, Virgin",
+                2,
+                "white",
+                liturgical_year=None,
+            ),
+            litcal_event(
+                "2026-09-05",
+                "Saturday Memorial of the Blessed Virgin Mary",
+                2,
+                "white",
+                liturgical_year=None,
+            ),
+            litcal_event(
+                "2026-09-05",
+                "23rd Sunday of Ordinary Time Vigil Mass",
+                5,
+                is_vigil_mass=True,
+            ),
         ]
         day = ora.celebration_from_litcal(events, dt.date(2026, 9, 5))
         self.assertEqual(day["name"], "Saint Teresa of Calcutta, Virgin")
@@ -59,12 +89,24 @@ class LitCalTests(unittest.TestCase):
         self.assertEqual(day["color"], "white")
         self.assertEqual(day["week"], "22")
         self.assertEqual(day["liturgicalYear"], "Year II")
-        self.assertEqual(day["weekdayName"], "Saturday of the 22nd Week of Ordinary Time")
-        self.assertEqual(day["alsoToday"], ["Saturday Memorial of the Blessed Virgin Mary"])
+        self.assertEqual(
+            day["weekdayName"], "Saturday of the 22nd Week of Ordinary Time"
+        )
+        self.assertEqual(
+            day["alsoToday"], ["Saturday Memorial of the Blessed Virgin Mary"]
+        )
         self.assertEqual(day["vigil"], "23rd Sunday of Ordinary Time")
 
     def test_sunday_and_purple(self):
-        events = [litcal_event("2026-03-15", "Fourth Sunday of Lent", 7, "rose", liturgical_year="YEAR A")]
+        events = [
+            litcal_event(
+                "2026-03-15",
+                "Fourth Sunday of Lent",
+                7,
+                "rose",
+                liturgical_year="YEAR A",
+            )
+        ]
         day = ora.celebration_from_litcal(events, dt.date(2026, 3, 15))
         self.assertEqual(day["rank"], "Sunday")
         self.assertEqual(day["color"], "rose")
@@ -86,7 +128,9 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(ora.usccb_date(items[0]["link"]), "2026-09-02")
         readings = ora.parse_readings(items[0]["description"])
-        self.assertEqual([r["label"] for r in readings], ["Reading 1", "Psalm", "Alleluia", "Gospel"])
+        self.assertEqual(
+            [r["label"] for r in readings], ["Reading 1", "Psalm", "Alleluia", "Gospel"]
+        )
         self.assertEqual(readings[-1]["citation"], "Luke 4:38-44")
         # Only citations are kept; the copyrighted Lectionary text never leaves USCCB's page.
         self.assertNotIn("text", json.dumps(readings))
@@ -113,18 +157,36 @@ class FeedTests(unittest.TestCase):
         self.assertFalse(ora.valid_citation("Alleluia"))
 
     def test_wordonfire_date(self):
-        self.assertEqual(ora.wordonfire_date("Wednesday, September 2, 2026"), "2026-09-02")
-        self.assertEqual(ora.wordonfire_date("Daily Gospel Reflections - Word on Fire"), "")
+        self.assertEqual(
+            ora.wordonfire_date("Wednesday, September 2, 2026"), "2026-09-02"
+        )
+        self.assertEqual(
+            ora.wordonfire_date("Daily Gospel Reflections - Word on Fire"), ""
+        )
 
 
 class PrayerTests(unittest.TestCase):
     def test_hours(self):
-        self.assertEqual(ora.prayer_for(dt.datetime(2026, 9, 2, 7, 0), False)["key"], "morningOffering")
-        self.assertEqual(ora.prayer_for(dt.datetime(2026, 9, 2, 12, 0), False)["key"], "angelus")
-        self.assertEqual(ora.prayer_for(dt.datetime(2026, 9, 2, 12, 0), True)["key"], "reginaCaeli")
-        self.assertEqual(ora.prayer_for(dt.datetime(2026, 9, 2, 15, 0), False)["key"], "memorare")
-        self.assertEqual(ora.prayer_for(dt.datetime(2026, 9, 2, 18, 30), False)["slot"], "Evening")
-        self.assertEqual(ora.prayer_for(dt.datetime(2026, 9, 2, 23, 0), False)["key"], "actOfContrition")
+        self.assertEqual(
+            ora.prayer_for(dt.datetime(2026, 9, 2, 7, 0), False)["key"],
+            "morningOffering",
+        )
+        self.assertEqual(
+            ora.prayer_for(dt.datetime(2026, 9, 2, 12, 0), False)["key"], "angelus"
+        )
+        self.assertEqual(
+            ora.prayer_for(dt.datetime(2026, 9, 2, 12, 0), True)["key"], "reginaCaeli"
+        )
+        self.assertEqual(
+            ora.prayer_for(dt.datetime(2026, 9, 2, 15, 0), False)["key"], "memorare"
+        )
+        self.assertEqual(
+            ora.prayer_for(dt.datetime(2026, 9, 2, 18, 30), False)["slot"], "Evening"
+        )
+        self.assertEqual(
+            ora.prayer_for(dt.datetime(2026, 9, 2, 23, 0), False)["key"],
+            "actOfContrition",
+        )
 
 
 class PayloadTests(unittest.TestCase):
@@ -145,9 +207,16 @@ class PayloadTests(unittest.TestCase):
         payload = ora.today_payload(dt.date(2026, 8, 30))
         self.assertEqual(payload["source"], "builtin")
         self.assertEqual(payload["celebration"]["name"], "Ordinary Time")
-        self.assertEqual(payload["links"]["readings"], "https://www.wordonfire.org/reflections/")
-        self.assertEqual(payload["links"]["usccb"], "https://bible.usccb.org/bible/readings/083026.cfm")
-        self.assertEqual(payload["links"]["rosary"], "https://www.usccb.org/how-to-pray-the-rosary")
+        self.assertEqual(
+            payload["links"]["readings"], "https://www.wordonfire.org/reflections/"
+        )
+        self.assertEqual(
+            payload["links"]["usccb"],
+            "https://bible.usccb.org/bible/readings/083026.cfm",
+        )
+        self.assertEqual(
+            payload["links"]["rosary"], "https://www.usccb.org/how-to-pray-the-rosary"
+        )
         self.assertEqual(payload["mysteries"][0], "The Resurrection")
         self.assertEqual(payload["progress"], 0)
         self.assertEqual(len(payload["week"]), 7)
@@ -156,48 +225,96 @@ class PayloadTests(unittest.TestCase):
     def test_today_cli_with_common_readings_reference(self):
         # LitCal uses a string for some memorials instead of citation fields.
         # Exercise the same cache -> CLI -> JSON path the QML service uses.
-        ora.write_json(ora.CACHE_DIR / "omarchy" / "ora" / "calendar-US-2026.json", {"litcal": [
-            litcal_event("2026-10-03", "Saturday Memorial of the Blessed Virgin Mary", 2,
-                         "white", readings="From the Common of the Blessed Virgin Mary"),
-        ]})
+        ora.write_json(
+            ora.CACHE_DIR / "omarchy" / "ora" / "calendar-US-2026.json",
+            {
+                "litcal": [
+                    litcal_event(
+                        "2026-10-03",
+                        "Saturday Memorial of the Blessed Virgin Mary",
+                        2,
+                        "white",
+                        readings="From the Common of the Blessed Virgin Mary",
+                    ),
+                ]
+            },
+        )
         result = subprocess.run(
-            ["/usr/bin/python3", "-I", str(ROOT / "ora"), "today", "--date", "2026-10-03"],
-            env={"XDG_CACHE_HOME": str(ora.CACHE_DIR),
-                 "XDG_STATE_HOME": str(ora.STATE_DIR)},
-            capture_output=True, text=True, timeout=5,
+            [
+                "/usr/bin/python3",
+                "-I",
+                str(ROOT / "ora"),
+                "today",
+                "--date",
+                "2026-10-03",
+            ],
+            env={
+                "XDG_CACHE_HOME": str(ora.CACHE_DIR),
+                "XDG_STATE_HOME": str(ora.STATE_DIR),
+            },
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["date"], "2026-10-03")
-        self.assertEqual(payload["celebration"]["name"], "Saturday Memorial of the Blessed Virgin Mary")
+        self.assertEqual(
+            payload["celebration"]["name"],
+            "Saturday Memorial of the Blessed Virgin Mary",
+        )
         self.assertEqual(payload["celebration"]["readings"], {})
         self.assertEqual(payload["readings"], [])
 
     def test_cached_feeds_and_completion(self):
-        ora.write_json(ora.FEEDS_FILE, {
-            "fetched": "2026-09-02T08:00:00",
-            "usccb": {"2026-09-02": {"title": "Wednesday", "link": "https://bible.usccb.org/bible/readings/090226.cfm",
-                                     "readings": [{"label": "Gospel", "citation": "Luke 4:38-44"}]}},
-            "wordonfire": {"2026-09-02": "https://www.wordonfire.org/reflections/a-ordinary2026-wk22-wednesday/"},
-        })
+        ora.write_json(
+            ora.FEEDS_FILE,
+            {
+                "fetched": "2026-09-02T08:00:00",
+                "usccb": {
+                    "2026-09-02": {
+                        "title": "Wednesday",
+                        "link": "https://bible.usccb.org/bible/readings/090226.cfm",
+                        "readings": [{"label": "Gospel", "citation": "Luke 4:38-44"}],
+                    }
+                },
+                "wordonfire": {
+                    "2026-09-02": "https://www.wordonfire.org/reflections/a-ordinary2026-wk22-wednesday/"
+                },
+            },
+        )
         ora.set_completed("readings", True, dt.date(2026, 9, 1))
         ora.set_completed("rosary", True, dt.date(2026, 9, 2))
         payload = ora.today_payload(dt.datetime(2026, 9, 2, 12, 0))
         self.assertEqual(payload["gospel"], "Luke 4:38-44")
-        self.assertEqual(payload["links"]["readings"], "https://www.wordonfire.org/reflections/a-ordinary2026-wk22-wednesday/")
+        self.assertEqual(
+            payload["links"]["readings"],
+            "https://www.wordonfire.org/reflections/a-ordinary2026-wk22-wednesday/",
+        )
         self.assertEqual(payload["progress"], 1)
         self.assertEqual(payload["streak"], 2)
         self.assertTrue(payload["week"][-1]["rosary"])
         self.assertTrue(payload["week"][-2]["readings"])
 
     def test_bad_cached_citations_are_filtered_on_read(self):
-        ora.write_json(ora.FEEDS_FILE, {
-            "fetched": "2026-09-14T08:00:00",
-            "usccb": {"2026-09-14": {"title": "Feast", "link": "https://bible.usccb.org/bible/readings/091426.cfm",
-                                     "readings": [{"label": "Alleluia", "citation": '">'},
-                                                  {"label": "Gospel", "citation": "John 3:13-17"}]}},
-            "wordonfire": {},
-        })
+        ora.write_json(
+            ora.FEEDS_FILE,
+            {
+                "fetched": "2026-09-14T08:00:00",
+                "usccb": {
+                    "2026-09-14": {
+                        "title": "Feast",
+                        "link": "https://bible.usccb.org/bible/readings/091426.cfm",
+                        "readings": [
+                            {"label": "Alleluia", "citation": '">'},
+                            {"label": "Gospel", "citation": "John 3:13-17"},
+                        ],
+                    }
+                },
+                "wordonfire": {},
+            },
+        )
         payload = ora.today_payload(dt.datetime(2026, 9, 14, 12, 0))
         self.assertEqual([r["label"] for r in payload["readings"]], ["Gospel"])
         self.assertEqual(payload["gospel"], "John 3:13-17")
@@ -223,10 +340,14 @@ class SecurityTests(unittest.TestCase):
             self.assertNotIn(bare, source)
 
     def test_trusted_url(self):
-        self.assertTrue(ora.trusted_url("https://bible.usccb.org/bible/readings/091426.cfm"))
+        self.assertTrue(
+            ora.trusted_url("https://bible.usccb.org/bible/readings/091426.cfm")
+        )
         self.assertTrue(ora.trusted_url("https://www.wordonfire.org/reflections/x/"))
         self.assertTrue(ora.trusted_url("https://WWW.USCCB.ORG/how-to-pray-the-rosary"))
-        self.assertFalse(ora.trusted_url("http://bible.usccb.org/bible/readings/091426.cfm"))
+        self.assertFalse(
+            ora.trusted_url("http://bible.usccb.org/bible/readings/091426.cfm")
+        )
         self.assertFalse(ora.trusted_url("https://evil.example/bible.usccb.org"))
         self.assertFalse(ora.trusted_url("https://bible.usccb.org@evil.example/"))
         self.assertFalse(ora.trusted_url("https://bible.usccb.org.evil.example/"))
@@ -248,24 +369,28 @@ class SecurityTests(unittest.TestCase):
         payload = ora.today_payload(dt.date(2026, 8, 30))
         for name, url in payload["links"].items():
             self.assertTrue(ora.trusted_url(url), (name, url))
-        for url in (ora.LITCAL_URL.format(year=2026), ora.USCCB_RSS, ora.WORD_ON_FIRE_RSS):
+        for url in (
+            ora.LITCAL_URL.format(year=2026),
+            ora.USCCB_RSS,
+            ora.WORD_ON_FIRE_RSS,
+        ):
             self.assertTrue(ora.trusted_url(url), url)
 
 
 class FeedLinkTests(PayloadTests):
     def test_untrusted_feed_links_are_not_cached(self):
         rss = (
-            "<rss><channel>"
-            "<item><title>Wednesday</title><link>https://bible.usccb.org/bible/readings/090226.cfm</link><description></description></item>"
-            "<item><title>Thursday</title><link>https://evil.example/bible/readings/090326.cfm</link><description></description></item>"
-            "</channel></rss>"
-        ).encode()
+            b"<rss><channel>"
+            b"<item><title>Wednesday</title><link>https://bible.usccb.org/bible/readings/090226.cfm</link><description></description></item>"
+            b"<item><title>Thursday</title><link>https://evil.example/bible/readings/090326.cfm</link><description></description></item>"
+            b"</channel></rss>"
+        )
         wof = (
-            "<rss><channel>"
-            "<item><title>Wednesday, September 2, 2026</title><link>https://www.wordonfire.org/reflections/ok/</link></item>"
-            "<item><title>Thursday, September 3, 2026</title><link>https://evil.example/reflections/</link></item>"
-            "</channel></rss>"
-        ).encode()
+            b"<rss><channel>"
+            b"<item><title>Wednesday, September 2, 2026</title><link>https://www.wordonfire.org/reflections/ok/</link></item>"
+            b"<item><title>Thursday, September 3, 2026</title><link>https://evil.example/reflections/</link></item>"
+            b"</channel></rss>"
+        )
         saved = ora.fetch
         ora.fetch = lambda url: rss if url == ora.USCCB_RSS else wof
         try:
@@ -277,14 +402,30 @@ class FeedLinkTests(PayloadTests):
         self.assertEqual(sorted(feeds["wordonfire"]), ["2026-09-02"])
 
     def test_untrusted_cached_links_fall_back_to_defaults(self):
-        ora.write_json(ora.FEEDS_FILE, {
-            "fetched": "2026-09-02T08:00:00",
-            "usccb": {"2026-09-02": {"title": "Wednesday", "link": "https://evil.example/x", "readings": []}},
-            "wordonfire": {"2026-09-02": "http://www.wordonfire.org/reflections/plain-http/"},
-        })
+        ora.write_json(
+            ora.FEEDS_FILE,
+            {
+                "fetched": "2026-09-02T08:00:00",
+                "usccb": {
+                    "2026-09-02": {
+                        "title": "Wednesday",
+                        "link": "https://evil.example/x",
+                        "readings": [],
+                    }
+                },
+                "wordonfire": {
+                    "2026-09-02": "http://www.wordonfire.org/reflections/plain-http/"
+                },
+            },
+        )
         payload = ora.today_payload(dt.datetime(2026, 9, 2, 12, 0))
-        self.assertEqual(payload["links"]["usccb"], "https://bible.usccb.org/bible/readings/090226.cfm")
-        self.assertEqual(payload["links"]["readings"], "https://www.wordonfire.org/reflections/")
+        self.assertEqual(
+            payload["links"]["usccb"],
+            "https://bible.usccb.org/bible/readings/090226.cfm",
+        )
+        self.assertEqual(
+            payload["links"]["readings"], "https://www.wordonfire.org/reflections/"
+        )
 
 
 if __name__ == "__main__":
