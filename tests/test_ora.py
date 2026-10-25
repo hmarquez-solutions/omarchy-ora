@@ -220,7 +220,10 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(payload["mysteries"][0], "The Resurrection")
         self.assertEqual(payload["progress"], 0)
         self.assertEqual(len(payload["week"]), 7)
-        self.assertTrue(payload["week"][-1]["isToday"])
+        # 2026-08-30 is a Sunday: the week starts on it.
+        self.assertTrue(payload["week"][0]["isToday"])
+        self.assertEqual(payload["week"][0]["date"], "2026-08-30")
+        self.assertTrue(all(d["isFuture"] for d in payload["week"][1:]))
 
     def test_today_cli_with_common_readings_reference(self):
         # LitCal uses a string for some memorials instead of citation fields.
@@ -294,8 +297,12 @@ class PayloadTests(unittest.TestCase):
         )
         self.assertEqual(payload["progress"], 1)
         self.assertEqual(payload["streak"], 2)
-        self.assertTrue(payload["week"][-1]["rosary"])
-        self.assertTrue(payload["week"][-2]["readings"])
+        # Wednesday 2026-09-02: Sunday 08-30 to Saturday 09-05, today fourth.
+        week = payload["week"]
+        self.assertEqual([d["date"] for d in (week[0], week[-1])], ["2026-08-30", "2026-09-05"])
+        self.assertTrue(week[3]["isToday"] and week[3]["rosary"])
+        self.assertTrue(week[2]["readings"])
+        self.assertEqual([d["isFuture"] for d in week], [False] * 4 + [True] * 3)
 
     def test_bad_cached_citations_are_filtered_on_read(self):
         ora.write_json(
