@@ -634,6 +634,8 @@ Panel {
                   height: Style.space(44)
                   radius: Style.cornerRadius > 0 ? Style.space(8) : 0
                   color: modelData.isToday ? root.tint(root.sacred, 0.12) : "transparent"
+                  // Days still to come this week: nothing could be marked yet, so not shown as missed.
+                  opacity: modelData.isFuture ? 0.35 : 1
                   border.width: 1
                   border.color: modelData.isToday ? root.tint(root.sacred, 0.55) : root.tint(root.foreground, 0.08)
 

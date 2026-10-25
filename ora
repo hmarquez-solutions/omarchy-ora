@@ -646,9 +646,11 @@ def set_completed(kind: str, value: bool, day: dt.date | None = None) -> None:
 
 
 def week_strip(state: dict, day: dt.date) -> list[dict]:
+    """The week `day` falls in, Sunday to Saturday, as the liturgical week runs."""
+    sunday = day - dt.timedelta(days=(day.weekday() + 1) % 7)
     out = []
-    for offset in range(6, -1, -1):
-        d = day - dt.timedelta(days=offset)
+    for offset in range(7):
+        d = sunday + dt.timedelta(days=offset)
         record = state.get(d.isoformat(), {})
         out.append(
             {
@@ -657,7 +659,9 @@ def week_strip(state: dict, day: dt.date) -> list[dict]:
                 "readings": bool(record.get("readings")),
                 "rosary": bool(record.get("rosary")),
                 "prayer": bool(record.get("prayer")),
-                "isToday": offset == 0,
+                "isToday": d == day,
+                # Later this week: nothing could be marked yet, so it isn't shown as missed.
+                "isFuture": d > day,
             }
         )
     return out
